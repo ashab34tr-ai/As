@@ -59,6 +59,7 @@ select{background:var(--panel2);border:1px solid var(--line);border-radius:6px;p
 .vbar>*{pointer-events:auto}
 .vbar button{padding:4px 9px;font-size:12px;background:color-mix(in srgb,var(--panel) 88%,transparent)}
 .vbar label{font-size:12px;display:flex;gap:4px;align-items:center;background:color-mix(in srgb,var(--panel) 88%,transparent);border:1px solid var(--line);border-radius:6px;padding:3px 8px}
+.emptyhint{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);font-size:15px;color:var(--muted);background:color-mix(in srgb,var(--panel) 88%,transparent);border:1px solid var(--line);border-radius:8px;padding:10px 16px;text-align:center;max-width:80%;pointer-events:none}
 .legend{position:absolute;left:8px;bottom:8px;font-size:11px;color:var(--muted);background:color-mix(in srgb,var(--panel) 88%,transparent);border:1px solid var(--line);border-radius:6px;padding:4px 8px;max-width:calc(100% - 16px)}
 .povhead{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line)}
 .povhead b{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--cam)}
@@ -96,10 +97,11 @@ select{background:var(--panel2);border:1px solid var(--line);border-radius:6px;p
 @media (max-width:980px){
   html,body{height:auto}
   .app{height:auto;grid-template-columns:minmax(0,1fr);grid-template-rows:none;
-    grid-template-areas:"view" "pov" "time" "side"}
+    grid-template-areas:"side" "view" "pov" "time"}
   .view{height:56vh;min-height:300px}
   .pov{height:520px}
   .side{overflow:visible}
+  #prompt{min-height:170px}
   .lanes{--lw:70px}
 }
 @media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
@@ -109,27 +111,30 @@ select{background:var(--panel2);border:1px solid var(--line);border-radius:6px;p
   <section class="panel side" aria-label="Промпт">
     <div>
       <h1>Превиз промпта</h1>
-      <p class="hint">Вставь промпт, получи сцену в 3D: где камера, где люди, что происходит по секундам. До генерации.</p>
+      <p class="hint">Вставь промпт и нажми «Построить 3D»: увидишь, где камера, где люди и что происходит по секундам.</p>
     </div>
     <div>
-      <h2>Промпт</h2>
-      <textarea id="prompt" spellcheck="false" aria-label="Текст промпта"></textarea>
+      <h2>Твой промпт</h2>
+      <textarea id="prompt" spellcheck="false" aria-label="Текст промпта" placeholder="Вставь сюда свой промпт для видео. Лучше с планами и секундами, например:
+План 1 (0–3 с): крупно лицо Артёма, камера статична…
+План 2 (3–9 с): средний план двоих, камера медленно наезжает…"></textarea>
     </div>
     <div class="row">
       <label class="hint" for="fmt">Кадр</label>
       <select id="fmt"><option value="9:16">9:16 вертикальный</option><option value="16:9">16:9 горизонтальный</option><option value="1:1">1:1 квадрат</option></select>
       <button id="build" class="primary" type="button">Построить 3D</button>
-      <button id="demo" type="button">Демо</button>
+      <button id="claudeBuild" type="button" title="Claude разберёт промпт точнее">Точнее через Claude</button>
+      <button id="demo" type="button">Пример</button>
     </div>
     <div id="status" class="status" role="status"></div>
     <div>
       <div class="tabs" role="tablist">
-        <button type="button" role="tab" id="tabGaps" aria-selected="true">Что не сказано</button>
+        <button type="button" role="tab" id="tabGaps" aria-selected="true">Что я додумал</button>
         <button type="button" role="tab" id="tabJson" aria-selected="false">Сцена (JSON)</button>
       </div>
     </div>
     <div id="paneGaps">
-      <p class="hint" style="margin-bottom:6px">Эти места видеомодель додумает сама. Впиши их в промпт.</p>
+      <p class="hint" style="margin-bottom:6px">Чего нет в промпте и что я принял сам. Видеомодель тоже додумает это сама.</p>
       <ul id="gaps" class="gaps"></ul>
     </div>
     <div id="paneJson" hidden>
@@ -148,13 +153,14 @@ select{background:var(--panel2);border:1px solid var(--line);border-radius:6px;p
       <label><input type="checkbox" id="optPaths" checked> Траектории</label>
       <label><input type="checkbox" id="optLabels" checked> Подписи</label>
     </div>
+    <div class="emptyhint" id="emptyHint">Вставь промпт и нажми «Построить 3D»</div>
     <div class="legend">Оси: +X вправо, −Z вглубь, сетка 1 м. Янтарная камера и пирамида показывают кадр. Тяни мышью: вращение, колесо: зум, Shift: сдвиг.</div>
   </section>
 
   <section class="panel pov" aria-label="Кадр камеры">
     <div class="povhead"><b>Кадр камеры</b><span id="povInfo">—</span></div>
     <div class="povwrap" id="povwrap">
-      <div class="frame" id="frame"><canvas id="povcv"></canvas><div class="thirds"></div><div class="shotname" id="shotname"></div><div class="sub" id="sub"></div></div>
+      <div class="frame" id="frame"><canvas id="povcv"></canvas><div class="thirds"></div><div class="shotname" id="shotname"></div></div>
     </div>
     <div class="now" id="now"></div>
   </section>
@@ -216,6 +222,8 @@ function poseVec(str){
 /* ---------- Нормализация сцены ---------- */
 const CHAR_COLORS=['#2fb7a5','#e8665a','#8b7cf6','#c7d447','#f0a33a','#4aa3ff'];
 const PROP_DEF={table:[1.4,.75,.8],round_table:[.8,.75,.8],chair:[.45,.9,.45],sofa:[1.8,.85,.85],bench:[1.5,.45,.4],box:[.5,.5,.5],cylinder:[.5,.5,.5],sphere:[.5,.5,.5],cup:[.08,.1,.08],laptop:[.35,.25,.25],tree:[1.5,4,1.5],car:[1.8,1.4,4.2],wall:[4,2.5,.15],lamp:[.3,1.6,.3],bed:[1.6,.5,2],mic:[.06,.25,.06],door:[.9,2.1,.06],phone:[.07,.02,.14]};
+const PR={stand:'стоит',walk:'идёт',run:'бежит',sit:'сидит',sit_lean:'сидит, наклонился',lean:'наклонился',crouch:'присел',hold:'держит предмет',hold_l:'держит предмет',point:'показывает',raise_hand:'рука вверх',raise_both:'руки вверх',talk:'говорит',cross:'руки скрещены',hands_on_table:'руки на столе',wave:'машет',hands_up:'руки вверх'};
+const poseRu=p=>String(p).toLowerCase().split(/[+,\s]+/).filter(Boolean).map(x=>PR[x]||x).join(', ');
 const sortT=a=>a.sort((x,y)=>x.t-y.t);
 
 function normalize(raw){
@@ -496,15 +504,13 @@ function updateDom(t,ce,states){
   const D=SC.duration; $('#tc').textContent=t.toFixed(1)+' / '+D.toFixed(1)+' с'; $('#scrub').value=t; $('#lanes').style.setProperty('--p',(t/D).toFixed(5));
   const shot=SC.shots.find(s=>t>=s.t0&&t<s.t1)||SC.shots[SC.shots.length-1];
   $('#shotname').textContent=(shot?shot.name+(shot.framing?' · '+shot.framing:''):'')+'  '+t.toFixed(1)+'с';
-  const sp=SC.speech.filter(s=>t>=s.t0&&t<s.t1).map(s=>(s.who?s.who+': ':'')+s.text); $('#sub').textContent=sp.join('  |  ');
   const dnow=ce.pos.distanceTo(ce.target); $('#povInfo').textContent=Math.round(ce.lens)+' мм · h '+fmt1(ce.pos.y)+' м';
   const v=new THREE.Vector3(); let h='';
   h+='<div class="cam">Камера: '+Math.round(ce.lens)+' мм, высота '+fmt1(ce.pos.y)+' м, до цели '+fmt1(dnow)+' м</div>';
   if(shot&&shot.desc)h+='<div class="hint">'+esc(shot.desc)+'</div>';
   SC.chars.forEach(c=>{const st=states[c.id]; v.set(st.x,eyeH(st.sit)*c.scale-.1,st.z); const d=shotCam.position.distanceTo(v); const pr=v.clone().project(shotCam); const front=v.clone().applyMatrix4(shotCam.matrixWorldInverse).z<0;
-    const inF=front&&Math.abs(pr.x)<=1&&Math.abs(pr.y)<=1; const act=(st.s>.5?st.B.action:st.A.action)||(st.B.pose);
+    const inF=front&&Math.abs(pr.x)<=1&&Math.abs(pr.y)<=1; const act=(st.s>.5?st.B.action:st.A.action)||poseRu(st.B.pose);
     h+='<div class="who"><span class="dot" style="background:'+c.color+'"></span><div><b>'+esc(c.name)+'</b><small>'+esc(act)+' · '+fmt1(d)+' м</small></div><span class="'+(inF?'in':'out')+'">'+(inF?'в кадре':'за кадром')+'</span></div>';});
-  const fx=SC.fx.filter(s=>t>=s.t0&&t<s.t1).map(s=>s.text); if(fx.length)h+='<div class="hint">Звук: '+esc(fx.join(', '))+'</div>';
   $('#now').innerHTML=h;
 }
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -519,11 +525,9 @@ function renderTimeline(){
   SC.shots.forEach((s,i)=>add(ct,s.t0,s.t1,s.name+(s.framing?' · '+s.framing:''),shades[i%4],'#1b1300','',s.name+': '+s.desc));
   SC.cam.kfs.filter(k=>k.cut&&k.t>0).forEach(k=>{const e=document.createElement('div');e.className='cut';e.style.left=pc(k.t);ct.append(e)});
   SC.chars.forEach(c=>{const tr=lane(c.name,c.color); const k=c.kfs; const col=c.color;
-    for(let i=1;i<k.length;i++){ if(k[i].t<=k[i-1].t)continue; const txt=k[i].action||k[i].pose; add(tr,k[i-1].t,k[i].t,txt,'color-mix(in srgb,'+col+' 38%,var(--panel2))','var(--fg)','',(k[i-1].t.toFixed(1)+'–'+k[i].t.toFixed(1)+' с: '+txt)); }
-    const last=k[k.length-1]; if(last.t<D)add(tr,last.t,D,last.action||last.pose,'color-mix(in srgb,'+col+' 22%,var(--panel2))','var(--fg)','hold',last.action||last.pose);
-    if(k[0].t>0)add(tr,0,k[0].t,k[0].action||k[0].pose,'color-mix(in srgb,'+col+' 22%,var(--panel2))','var(--fg)','hold');});
-  if(SC.speech.length||SC.fx.length){const tr=lane('Речь и звук','var(--muted)'); SC.speech.forEach(s=>add(tr,s.t0,s.t1,(s.who?s.who+': ':'')+s.text,'var(--panel2)','var(--fg)','','«'+s.text+'»'));
-    const tr2=SC.fx.length?lane('Звук','var(--muted)'):null; SC.fx.forEach(s=>add(tr2,s.t0,s.t1,s.text,'var(--panel2)','var(--muted)'));}
+    for(let i=1;i<k.length;i++){ if(k[i].t<=k[i-1].t)continue; const txt=k[i].action||poseRu(k[i].pose); add(tr,k[i-1].t,k[i].t,txt,'color-mix(in srgb,'+col+' 38%,var(--panel2))','var(--fg)','',(k[i-1].t.toFixed(1)+'–'+k[i].t.toFixed(1)+' с: '+txt)); }
+    const last=k[k.length-1]; if(last.t<D)add(tr,last.t,D,last.action||poseRu(last.pose),'color-mix(in srgb,'+col+' 22%,var(--panel2))','var(--fg)','hold',last.action||poseRu(last.pose));
+    if(k[0].t>0)add(tr,0,k[0].t,k[0].action||poseRu(k[0].pose),'color-mix(in srgb,'+col+' 22%,var(--panel2))','var(--fg)','hold');});
   const ph=document.createElement('div');ph.className='ph';L.append(ph);
   $('#scrub').max=D;
 }
@@ -586,15 +590,195 @@ let RAW=null;
 function loadScene(raw){
   RAW=raw; SC=normalize(raw); T=0; lastDom=-1; setPlaying(false);
   buildWorld(); renderTimeline();
-  const g=$('#gaps'); g.innerHTML=SC.gaps.length?SC.gaps.map(x=>'<li>'+esc(x)+'</li>').join(''):''; if(!SC.gaps.length)g.innerHTML='<li class="empty" style="list-style:none;margin-left:-18px">Пробелов не найдено. Проверь по таймлайну сам.</li>';
+  const g=$('#gaps'); g.innerHTML=SC.gaps.length?SC.gaps.map(x=>'<li>'+esc(x)+'</li>').join(''):''; if(!SC.gaps.length&&SC.chars.length)g.innerHTML='<li class="empty" style="list-style:none;margin-left:-18px">Пробелов не найдено. Проверь по таймлайну сам.</li>';
   $('#json').value=JSON.stringify(raw,null,1);
   // вид: центр по героям
   const xs=SC.chars.map(c=>c.kfs[0].pos[0]).concat(SC.props.map(p=>p.base.pos[0])), zs=SC.chars.map(c=>c.kfs[0].pos[1]).concat(SC.props.map(p=>p.base.pos[1]));
   const cx=xs.length?xs.reduce((a,b)=>a+b)/xs.length:0, cz=zs.length?zs.reduce((a,b)=>a+b)/zs.length:0;
   const pts=SC.cam.kfs.map(k=>k.pos); let ext=4; pts.forEach(p=>{ext=Math.max(ext,Math.hypot(p[0]-cx,p[2]-cz)+1)});
   orb.tx=cx;orb.ty=1;orb.tz=cz;orb.r=clamp(ext*1.1,5,40); setView('free');
+  $('#emptyHint').hidden=SC.chars.length>0;
   applyViewToggles(); applyTime(0);
 }
+
+/* ---------- Локальный разбор промпта (без Claude, по ключевым словам) ---------- */
+const STOPW=new Set('общее план камера свет тишина хук развязка нарастание сцена кадр локация звук музыка герой герои крупно крупный средний общий фон затемнение склейка дальше потом затем вдруг статичная слева справа сверху снизу ветер солнце дождь поле ночь день утро вечер снег он она они его её их там тут это при после перед когда если пока только'.split(' '));
+const ROLES=[['мужчин','Мужчина'],['женщин','Женщина'],['девушк','Девушка'],['парен','Парень'],['парн','Парень'],['старик','Старик'],['старуш','Старушка'],['ребён','Ребёнок'],['мальчик','Мальчик'],['девочк','Девочка'],['врач','Врач'],['доктор','Доктор'],['ведущ','Ведущий'],['гост','Гость'],['официант','Официант'],['продавец','Продавец'],['покупател','Покупатель'],['клиент','Клиент'],['менеджер','Менеджер'],['эксперт','Эксперт'],['бабушк','Бабушка'],['дедушк','Дедушка'],['охранник','Охранник'],['курьер','Курьер'],['героиня','Героиня'],['герой','Герой']];
+const normW=w=>w.toLowerCase().replace(/ё/g,'е').replace(/ь/g,'');
+function sameName(a,b){const t=(x,y)=>{let k=0;while(k<x.length&&k<y.length&&x[k]===y[k])k++;return k>=2&&k>=Math.min(x.length,y.length)-1&&Math.abs(x.length-y.length)<=3};const x=normW(a),y=normW(b);return t(x,y)||t(x.replace(/е/g,''),y.replace(/е/g,''))}
+const splitSent=s=>s.split(/[.!?\n]+/).map(x=>x.trim()).filter(x=>x.length>1);
+const tokensOf=s=>{const r=[],re=/[А-Яа-яЁё]+/g;let m;while((m=re.exec(s)))r.push({w:m[0],i:m.index});return r};
+
+function localParse(text,fmt){
+  const asp=fmt==='16:9'?16/9:fmt==='1:1'?1:9/16, sw=asp>=1?36:36*asp;
+  const gaps=[]; const pf=s=>parseFloat(String(s).replace(',','.'));
+  let T=String(text).replace(/\r/g,'');
+  T=T.replace(/«[^»]*»/g,' ').replace(/"[^"\n]*"/g,' ').replace(/([А-ЯЁ][а-яё]+)\s*:\s*[—–-][^.!?\n]*[.!?]?/g,'$1 говорит. ').replace(/(^|\n)\s*[—–-]\s[^\n]*/g,'$1');
+  const low=T.toLowerCase();
+  // --- планы по таймингу
+  const reT=/(\d+(?:[.,]\d+)?)\s*[–—-]\s*(\d+(?:[.,]\d+)?)\s*(?:сек[а-яё]*|с)(?![а-яёa-z])/gi;
+  const marks=[]; let m;
+  while((m=reT.exec(T)))marks.push({i:m.index,end:reT.lastIndex,t0:pf(m[1]),t1:pf(m[2])});
+  let plans=[],general=T;
+  if(marks.length){general=T.slice(0,marks[0].i);marks.forEach((k,j)=>plans.push({t0:k.t0,t1:Math.max(k.t1,k.t0+.5),text:T.slice(k.end,j+1<marks.length?marks[j+1].i:T.length)}));}
+  else{const dm=/(\d+(?:[.,]\d+)?)\s*(?:сек[а-яё]*|с)(?![а-яёa-z])/i.exec(T);const D=dm?clamp(pf(dm[1]),2,60):10;plans=[{t0:0,t1:D,text:T}];general='';gaps.push('Тайминг по планам («План 1 (0–3 с)») не найден: весь промпт принят как один план.');}
+  // --- герои
+  const cand={},tokRe=/[А-ЯЁ][а-яё]{2,}/g; let mm;
+  while((mm=tokRe.exec(T))){const w=mm[0]; if(STOPW.has(w.toLowerCase()))continue;
+    const init=/(^|[.!?:;—–\-\n])\s*$/.test(T.slice(0,mm.index)); const paren=/^\s*\(/.test(T.slice(mm.index+w.length));
+    const o=cand[w]||(cand[w]={w,mid:0,init:0,paren:0,first:mm.index,n:0}); o.n++; init?o.init++:o.mid++; if(paren)o.paren++;}
+  const sel=Object.values(cand).filter(o=>o.mid||o.paren||o.n>=2).sort((a,b)=>a.first-b.first);
+  const names=[]; for(const o of sel){const ex=names.find(n=>sameName(n.w,o.w)); if(ex){if(o.w.length<ex.w.length)ex.w=o.w}else names.push({w:o.w})}
+  let chars=names.slice(0,5).map((n,i)=>({id:'c'+i,name:n.w,kind:'name',side:0}));
+  if(!chars.length){const seen=new Set(); ROLES.forEach(([stem,label])=>{if(low.includes(stem)&&!seen.has(label)&&chars.length<4){seen.add(label);chars.push({id:'c'+chars.length,name:label,kind:'role',stem:normW(stem),side:0})}});}
+  if(!chars.length){const two=/двое|двоих|два человека|вдвоём|вдвоем|пара(?![а-яё])/.test(low); const k=two?2:1; for(let i=0;i<k;i++)chars.push({id:'c'+i,name:k>1?'Герой '+(i+1):'Герой',kind:'role',stem:null,side:0}); gaps.push('Имён и ролей героев в промпте нет: поставил безымянных.');}
+  const mentions=s=>{const out=[];tokensOf(s).forEach(t=>{chars.forEach(c=>{
+      if(c.kind==='name'){if(/[А-ЯЁ]/.test(t.w[0])&&t.w.length>=3&&sameName(t.w,c.name))out.push({c,i:t.i})}
+      else if(c.stem&&normW(t.w).startsWith(c.stem))out.push({c,i:t.i});});});return out.sort((a,b)=>a.i-b.i)};
+  // стороны слева/справа
+  splitSent(T).forEach(s=>{let ls=0;const ms=mentions(s);tokensOf(s).forEach(t=>{const l=t.w.toLowerCase(); if(l==='слева')ls=-1; else if(l==='справа')ls=1; else{const mn=ms.find(x=>x.i===t.i); if(mn){if(ls&&!mn.c.side)mn.c.side=ls; ls=0}}})});
+  // начальная посадка
+  const sitSet=new Set(),standSet=new Set(); let sitAll=false;
+  splitSent(general+' . '+(plans[0]?plans[0].text:'')).forEach(s=>{const l=s.toLowerCase(),ms=mentions(s);
+    if(/сидит|сидят|сидя|за столом|на стуле|в кресле|на диване/.test(l)){if(ms.length)ms.forEach(x=>sitSet.add(x.c.id));else sitAll=true}
+    if(/стоит|стоят|стоя(?![а-яё])/.test(l))ms.forEach(x=>standSet.add(x.c.id));});
+  chars.forEach(c=>{c.sit=sitSet.has(c.id)||(sitAll&&!standSet.has(c.id))});
+  // --- расстановка
+  const order=[...chars].sort((a,b)=>a.side-b.side), props=[]; let tableC=null; const n=chars.length;
+  const sitters=order.filter(c=>c.sit);
+  if(sitters.length&&(/стол/.test(low)||sitters.length>=2)){tableC=[0,0];props.push({id:'table',name:'Стол',shape:'round_table',pos:[0,0],size:[.8,.75,.8],color:'#7a5c3e'})}
+  if(tableC){const R=.95; sitters.forEach((c,k)=>{const ph=(sitters.length===1?270:270+k*360/sitters.length)%360;c.pos=[R*Math.sin(rad(ph)),-R*Math.cos(rad(ph))];c.facing=(ph+180)%360});
+    order.filter(c=>!c.sit).forEach((c,k)=>{c.pos=[-1.2+k*1.2,-2.2];c.facing=180});}
+  else if(n===2){order.forEach((c,k)=>{c.pos=[k?1:-1,0];c.facing=k?270:90})}
+  else{order.forEach((c,k)=>{c.pos=[(k-(n-1)/2)*1.3,0];c.facing=180})}
+  chars.forEach((c,i)=>{ if(c.sit&&!tableC||(c.sit&&tableC)) props.push({id:'chair'+i,name:'Стул',shape:'chair',pos:c.pos.slice(),facing:c.facing,color:'#3b3f46'});
+    c.st={pos:c.pos.slice(),facing:c.facing,post:c.sit?'sit':'stand',gest:'',look:null,action:''};});
+  if(n>=2)chars.forEach(c=>{const o=chars.filter(x=>x!==c).sort((a,b)=>Math.hypot(a.pos[0]-c.pos[0],a.pos[1]-c.pos[1])-Math.hypot(b.pos[0]-c.pos[0],b.pos[1]-c.pos[1]))[0]; c.st.look=o.id});
+  // --- предметы
+  let cupProp=null;
+  splitSent(T).forEach(s=>{const l=s.toLowerCase(); if(!cupProp&&/стакан|чашк|кружк|бокал/.test(l)){const ms=mentions(s); const held=/в (правой |левой )?руке|в руках|держит|крутит|вертит|несёт/.test(l);
+      cupProp={id:'cup',name:'Стакан',shape:'cup',pos:[.08,0],y:.75,color:'#e9e4d8'};
+      if(ms.length&&held){const ow=ms[0].c;cupProp.attach={char:ow.id,hand:'R',t0:0,t1:1e9};ow.st.gest='hold'} else if(!tableC){cupProp.pos=[0,0.6];cupProp.y=0}}});
+  if(cupProp)props.push(cupProp);
+  const onTable=(shape,name,color,size)=>props.push({id:shape,name,shape,pos:tableC?[-.08,.05]:[0,-1],y:tableC?.75:0,color,size});
+  if(/микрофон/.test(low))onTable('mic','Микрофон','#222',null);
+  if(/ноутбук/.test(low))onTable('laptop','Ноутбук','#555',null);
+  if(/машин|автомобил/.test(low))props.push({id:'car',name:'Машина',shape:'car',pos:[4.5,-3],facing:270,color:'#7a828c'});
+  if(/дерев/.test(low)){props.push({id:'tree1',name:'Дерево',shape:'tree',pos:[-5,-7],color:'#3d5a3a'},{id:'tree2',name:'Дерево',shape:'tree',pos:[5.5,-9],color:'#3d5a3a'})}
+  if(/скамейк/.test(low))props.push({id:'bench',name:'Скамейка',shape:'bench',pos:[0,-1.5],facing:180,color:'#7a5c3e'});
+  if(/диван/.test(low))props.push({id:'sofa',name:'Диван',shape:'sofa',pos:[0,-1.8],facing:180,color:'#5d6b8a'});
+  if(/лампа|фонар/.test(low))props.push({id:'lamp',name:'Лампа',shape:'lamp',pos:[-2,-1],color:'#aaa'});
+  // --- окружение и свет
+  let etype='outdoor'; if(/комнат|кабинет|студи|офис|кухн|квартир|ресторан|кафе|зал(?![а-яё])|внутри|помещени/.test(low))etype='room'; else if(/улиц|город|дорог|перекрёст|перекрест|двор/.test(low))etype='street';
+  const ground=/пустын|песок|песч/.test(low)?'#c2a878':/снег/.test(low)?'#e8edf2':etype==='room'?'#a89f94':etype==='street'?'#5a5f66':/лес|трав|луг/.test(low)?'#5b7a4a':'#6f6a4f';
+  const weather=/дожд|ливень|ливн/.test(low)?'rain':/снег|метел/.test(low)?'snow':/пыль|пыли|ветер|песчан/.test(low)?'dust':'none';
+  const sky=/ночь|ночн/.test(low)?'#10131c':/закат/.test(low)?'#c9a27a':/рассвет/.test(low)?'#e8b9a0':/дожд|пасмурн|туман|серое небо/.test(low)?'#8a97a3':etype==='room'?'#2a2d33':'#a9c4de';
+  let from=225,foundL=false; splitSent(T).forEach(s=>{const l=s.toLowerCase(); if(/свет|солнц|лампа|окно|прожектор|луна|фонар/.test(l)){foundL=true; if(/слева/.test(l))from=270; else if(/справа/.test(l))from=90; else if(/сзади|контровой|из-за/.test(l))from=0; else if(/спереди|в лицо|фронтальн/.test(l))from=180}});
+  if(!foundL)gaps.push('Источник света не указан: поставил сам. Напиши, откуда светит.');
+  const elev=/закат|рассвет|низкое солнце|низкое/.test(low)?12:/ночь|ночн/.test(low)?30:/полдень|яркое солнце/.test(low)?60:40;
+  // --- проход по планам
+  const KF={}; chars.forEach(c=>KF[c.id]=[]);
+  const poseOf=st=>st.post+(st.gest?'+'+st.gest:'');
+  const push=(c,t,act,over)=>{const st=Object.assign({},c.st,over||{});KF[c.id].push({t:+t.toFixed(2),pos:st.pos.slice(),facing:Math.round(st.facing),pose:poseOf(st),look:st.look,action:act!==undefined?act:st.action})};
+  const clone=c=>Object.assign({},c.st,{pos:c.st.pos.slice()});
+  const snap=()=>{const o={};chars.forEach(c=>o[c.id]={pos:c.st.pos.slice(),facing:c.st.facing,sit:/sit/.test(c.st.post)});return o};
+  const headOf=(sn,c)=>[sn[c.id].pos[0],sn[c.id].sit?1.25:1.6,sn[c.id].pos[1]];
+  const detect=l=>{const o=[]; const has=r=>r.test(l);
+    if(has(/встаёт|встает|встал|поднимается|вскакивает|вскочил/))o.push('stand');
+    if(has(/садится|присаживается|опускается на|откидывается/))o.push('sit');
+    if(has(/идёт|идет|шагает|проходит|идут|подходит|подходят|уходит|уходят|убегает|бежит|бегут|направляется|выходит|заходит|отходит/))o.push('move');
+    if(has(/поворачивает голову|поворачивается|поворачивают голову|оборачивается|смотрит|смотрят|взгляд|глядит|косится/))o.push('look');
+    if(has(/ставит|кладёт|кладет|отставляет/))o.push('release'); else if(has(/держит|в руке|в руках|крутит|вертит|сжимает/))o.push('hold');
+    if(has(/поднимает руку|поднимает руки|машет|вскидывает руку|поднял руку/))o.push(/машет/.test(l)?'wave':'raise');
+    if(has(/показывает|указывает|тычет/))o.push('point');
+    if(has(/жестикулирует|объясняет|рассказывает|говорит|спорит/))o.push('talk');
+    if(has(/скрещивает|сложил руки|скрестил/))o.push('cross');
+    if(has(/наклоняется|тянется|склоняется|подаётся вперёд|подается вперед|наклонился/))o.push('lean');
+    if(has(/замирает|застывает|неподвижен|неподвижна|не двигается|остаётся на месте|молчит|слушает|замер/))o.push('freeze');
+    return o};
+  let lastSubj=chars[0],camSubj=chars[0],prevEnd=0; const shots=[],camKfs=[];
+  const back=c=>{const f=rad(c.st.facing);return[-Math.sin(f),Math.cos(f)]};
+  plans.forEach((pl,pi)=>{
+    const t0=pl.t0,t1=pl.t1,dur=Math.max(t1-t0,.5); const startSnap=snap();
+    chars.forEach(c=>push(c,t0));
+    const sents=splitSent(pl.text), evs=[];
+    sents.forEach(s=>{
+      const body=s.split(/[,;]/).filter(x=>!/камер|наезд|отъезд|облёт|облет|панорам|кадр|план(?![а-яё])|крупн|средн(ий|им)|общ(ий|им)/i.test(x)).join(', ');
+      if(!body.trim())return; const ms=mentions(s);
+      let subj; if(/^\s*(они|оба|обе)(?![а-яё])/i.test(body))subj='all'; else if(/^\s*(он|она)(?![а-яё])/i.test(body))subj=lastSubj; else if(ms.length)subj=ms[0].c; else subj=lastSubj;
+      if(subj!=='all')lastSubj=subj;
+      const ops=detect(body.toLowerCase()); if(ops.length)evs.push({s:body,l:body.toLowerCase(),subj,ms,ops,fast:/резко|вскакивает|мгновенно|внезапно|вдруг|быстро|рывком/.test(body.toLowerCase())});
+    });
+    evs.forEach((ev,j)=>{
+      const te=t0+dur*(j+1)/(evs.length+1); const targets=ev.subj==='all'?chars:[ev.subj];
+      targets.forEach(c=>{
+        const st=c.st, prev=clone(c); const trans=ev.fast?.35:(ev.ops.some(o=>o==='stand'||o==='sit'||o==='lean')?1.0:1.5);
+        const act=ev.s.length>46?ev.s.slice(0,44)+'…':ev.s; let dest=null,run=false;
+        ev.ops.forEach(o=>{
+          if(o==='stand'){ if(/sit/.test(st.post)){const b=back(c);st.pos=[st.pos[0]+b[0]*.4,st.pos[1]+b[1]*.4]} st.post='stand' }
+          else if(o==='sit'){ if(!/sit/.test(st.post)){const b=back(c);st.pos=[st.pos[0]-b[0]*.4,st.pos[1]-b[1]*.4]} st.post='sit' }
+          else if(o==='lean'){ st.post=/sit/.test(st.post)?'sit_lean':'lean' }
+          else if(o==='hold'){ st.gest='hold' } else if(o==='release'){ if(st.gest==='hold')st.gest=''; if(cupProp&&cupProp.attach&&cupProp.attach.char===c.id)cupProp.attach.t1=te }
+          else if(o==='raise'){st.gest='raise_hand'} else if(o==='wave'){st.gest='wave'} else if(o==='point'){st.gest='point'} else if(o==='talk'){if(st.gest!=='hold')st.gest='talk'} else if(o==='cross'){st.gest='cross'}
+          else if(o==='freeze'){ if(st.gest!=='hold')st.gest=''; if(st.post==='sit_lean'||st.post==='lean')st.post=st.post }
+          else if(o==='look'){ const oth=ev.ms.map(x=>x.c).find(x=>x!==c);
+            if(/камер/.test(ev.l))st.look='camera'; else if(oth)st.look=oth.id; else if(/горизонт|вдаль|вдали|в даль/.test(ev.l))st.look=[st.pos[0],1.6,st.pos[1]-14]; else if(/небо|вверх/.test(ev.l))st.look=[st.pos[0],5,st.pos[1]-6]; else if(/вниз|на стол|на руки|на пол|под ноги/.test(ev.l)){const f=rad(st.facing);st.look=[st.pos[0]+Math.sin(f)*.8,.35,st.pos[1]-Math.cos(f)*.8]} }
+          else if(o==='move'){ run=/бежит|бегут|убегает/.test(ev.l); const oth=ev.ms.map(x=>x.c).find(x=>x!==c);
+            if(/sit/.test(st.post)){const b=back(c);st.pos=[st.pos[0]+b[0]*.4,st.pos[1]+b[1]*.4];st.post='stand'}
+            const p=st.pos;
+            if(/подход/.test(ev.l)&&oth){const vx=p[0]-oth.st.pos[0],vz=p[1]-oth.st.pos[1],L=Math.hypot(vx,vz)||1;dest=[oth.st.pos[0]+vx/L,oth.st.pos[1]+vz/L]}
+            else if(/к камере|на камеру|к зрителю/.test(ev.l))dest=[p[0],p[1]+5];
+            else if(/налево|влево/.test(ev.l))dest=[p[0]-4,p[1]]; else if(/направо|вправо/.test(ev.l))dest=[p[0]+4,p[1]];
+            else if(/уходит|уходят|убегает|от камеры|вглубь|вдаль|удаляется/.test(ev.l))dest=[p[0],p[1]-6];
+            else{dest=[p[0],p[1]-3];gaps.push('«'+c.name+'» идёт, но куда не сказано: отправил вглубь сцены.')} }
+        });
+        const same=JSON.stringify(prev)===JSON.stringify(clone(c));
+        if(dest){ const sp=run?2.6:1.1; let dx=dest[0]-st.pos[0],dz=dest[1]-st.pos[1]; const dist=Math.hypot(dx,dz)||.01; const T2=clamp(dist/sp,.8,Math.max(t1-te,.8)); const fc=bearing(dx,dz);
+          const last=KF[c.id][KF[c.id].length-1].t; push(c,Math.max(last,te-.3),prev.action,prev);
+          const startPos=st.pos.slice(); push(c,te,act,{post:run?'run':'walk',facing:fc,pos:startPos});
+          st.pos=dest.slice(); st.facing=fc; st.post='stand'; push(c,Math.min(te+T2,t1),act); }
+        else if(!same){ const last=KF[c.id][KF[c.id].length-1].t; const pre=Math.max(last,te-trans); if(pre<te-1e-3)push(c,pre,prev.action,prev); st.action=act; push(c,te,act); }
+      });
+    });
+    chars.forEach(c=>push(c,t1));
+    const endSnap=snap();
+    // --- камера
+    const lowP=pl.text.toLowerCase(); const msP=mentions(pl.text); if(msP.length)camSubj=msP[0].c;
+    const idx=re=>{const x=re.exec(lowP);return x?x.index:1e9};
+    const iC=idx(/крупн|лицо|лица|глаза|портрет|лицом/),iW=idx(/общ(ий|им|ем|его|ая)\s+план|общим|дальн(ий|им|ем)|издалека|с дрона|с высоты|вид сверху/),iM=idx(/средн(ий|им|ем|его)|по пояс|двое|двоих|вдвоем|вдвоём/);
+    let fr; if(Math.min(iC,iW,iM)===1e9){fr='medium';gaps.push('В плане '+(pi+1)+' не указан размер плана: принял средний.')} else fr=(iC<=iW&&iC<=iM)?'close':(iW<=iM?'wide':'medium');
+    const camText=sents.filter(s=>/камер|наезд|отъезд|облёт|облет|панорам/i.test(s)).join(' ').toLowerCase();
+    let lens,pos,tg;
+    if(fr==='close'){ lens=85; const place=sn=>{const f=rad(sn.facing+25),R=asp<1?1.5:1.9,hy=sn.sit?1.25:1.6;return{pos:[sn.pos[0]+Math.sin(f)*R,hy+.05,sn.pos[1]-Math.cos(f)*R],tg:[sn.pos[0],hy,sn.pos[1]]}};
+      const pl0=place(/следит|следует|за ним|сопровожда/.test(camText)?startSnap[camSubj.id]:startSnap[camSubj.id]); pos=pl0.pos; tg=pl0.tg; }
+    else { lens=fr==='wide'?28:50; const hf=2*Math.atan(sw/2/lens);
+      const group=(fr==='medium'&&msP.length&&!/двоих|обоих|вдвоем|вдвоём|вместе|всех|компани/.test(lowP))?[camSubj]:chars;
+      const ps=group.map(c=>startSnap[c.id].pos),xs=ps.map(p=>p[0]),zs=ps.map(p=>p[1]);
+      const cx=(Math.min(...xs)+Math.max(...xs))/2,cz=(Math.min(...zs)+Math.max(...zs))/2,span=Math.max(Math.max(...xs)-Math.min(...xs),Math.max(...zs)-Math.min(...zs));
+      const width=fr==='wide'?Math.max(span+4,7):span+1.6; const dist=clamp((width/2)/Math.tan(hf/2),fr==='wide'?5:2.2,30);
+      pos=[cx,fr==='wide'?2.4:1.35,cz+dist]; tg=[cx,fr==='wide'?1.1:1.15,cz];
+      if(/сверху|дрон|с высоты|вид сверху/.test(lowP)){pos=[cx,Math.min(dist*.9,14),cz+dist*.35];tg=[cx,.4,cz]}
+      if(/снизу|с земли|нижн(ий|им) ракурс/.test(lowP)){pos[1]=.45;tg[1]=1.5} }
+    let p2=pos.slice(),t2=tg.slice(); const amt=/медленно|плавно/.test(camText)?.22:/быстро|резко/.test(camText)?.55:.35; const dv=[tg[0]-pos[0],tg[1]-pos[1],tg[2]-pos[2]];
+    if(!/статичн|не двигается|фиксирован|неподвижн/.test(camText)){
+      if(/наезд|наезжа|приближа|подъезжа|ближе/.test(camText))p2=pos.map((v,i)=>v+dv[i]*amt);
+      else if(/отъезд|отъезжа|отдаля|удаля/.test(camText)){p2=pos.map((v,i)=>v-dv[i]*amt*1.6);p2[1]+=.4}
+      else if(/облёт|облет|вокруг|по кругу/.test(camText)){const a=rad(45),dx=pos[0]-tg[0],dz=pos[2]-tg[2];p2=[tg[0]+dx*Math.cos(a)-dz*Math.sin(a),pos[1],tg[2]+dx*Math.sin(a)+dz*Math.cos(a)]}
+      else if(/панорам/.test(camText)){const oth=chars.find(c=>c!==camSubj);t2=oth?headOf(endSnap,oth):[tg[0]+1.5,tg[1],tg[2]]}
+      else if(/слева направо|справа налево|трек|параллельно/.test(camText)){const sg=/справа налево/.test(camText)?-1:1;p2[0]+=1.8*sg;t2[0]+=1.8*sg} }
+    camKfs.push({t:t0,cut:pi>0,pos,target:tg,lens,label:fr},{t:t1,pos:p2,target:t2,lens});
+    const clean=pl.text.replace(/\s+/g,' ').replace(/^[\s):.,–—-]+/,'').replace(/[\s]*план\s*\d*\s*\(?\s*$/i,'').trim();
+    shots.push({t0,t1,name:'План '+(pi+1),framing:{close:'крупный',medium:'средний',wide:'общий'}[fr],desc:clean.length>110?clean.slice(0,108)+'…':clean});
+  });
+  if(n>=2&&chars.every(c=>!c.side))gaps.push('Не сказано, кто где сидит или стоит: расставил сам, лицом друг к другу.');
+  if(n>=2)gaps.push('Расстояние между героями не указано: принял '+(tableC?'1.9':'2.0')+' м.');
+  gaps.push('Позицию и высоту камеры в метрах промпт не задаёт: поставил по размеру плана. Напиши «камера в 3 м, на уровне глаз», если нужно точно.');
+  const ur=[...new Set(gaps)];
+  const dur=Math.max(...plans.map(p=>p.t1));
+  return {title:'Разбор промпта',duration:dur,environment:{type:etype,ground,sky,weather,desc:''},light:{from,elevation:elev,desc:''},props,
+    characters:chars.map(c=>({id:c.id,name:c.name,keyframes:KF[c.id]})),camera:{keyframes:camKfs},shots,gaps:ur};
+}
+window.PREVIS={localParse};
 
 /* ---------- Claude: промпт -> сцена ---------- */
 const SYS=`Ты — раскадровщик-превизуализатор. Из промпта для AI-видео собери JSON 3D-сцены, по которой видно, где камера, где люди и что происходит по секундам. Отвечай ТОЛЬКО одним JSON-объектом, без пояснений и без markdown.
@@ -612,26 +796,29 @@ const SYS=`Ты — раскадровщик-превизуализатор. И�
  "characters": [{"id":"латиница","name":"по-русски","color":"#hex","height":1.75,"keyframes":[{"t":сек,"pos":[x,z],"facing":градусы,"faceTo":"id (вместо facing)","pose":"см. ниже","look":"id|camera|[x,y,z]|null","action":"коротко по-русски что делает"}]}],
  "camera": {"keyframes":[{"t":сек,"pos":[x,y,z],"lookAt":"id героя или предмета","off":[0,0,0],"target":[x,y,z],"lens":мм,"cut":true,"label":""}]},
  "shots": [{"t0":сек,"t1":сек,"name":"План 1","framing":"крупный|средний|общий","desc":"что в кадре"}],
- "speech": [{"t0":сек,"t1":сек,"who":"имя","text":"реплика"}],
- "fx": [{"t0":сек,"t1":сек,"text":"звук или фон"}],
  "gaps": ["что в промпте не сказано, а видеомодели придётся додумывать"]
 }
 Позы: основа одна из stand, walk, run, sit, sit_lean, lean, crouch; к ней через + жесты: hold (стакан в правой), hold_l, point, raise_hand, raise_both, talk, cross, hands_on_table, wave, hands_up. Пример: "sit+hold". Ключевые кадры героя ставь в t=0, в каждой смене действия и в конце. Между соседними ключами значения плавно меняются, поэтому быстрое действие = два ключа рядом по времени. Если герой идёт, дай pos в двух ключах и pose "walk".
 Камера: на начало и конец каждого плана ставь ключ. Статика = два ключа с одной позицией. Наезд/отъезд/панорама = разные pos или target в ключах. Новый план после склейки: ключ с "cut":true и тем же t, что конец прошлого плана. lens — эквивалент полнокадровой камеры, 24–135 мм; для вертикального 9:16 дистанции больше, чем кажется: человека по пояс снимай с 50 мм примерно с 2.5 м. Если lookAt указан, камера следит за героем.
 Правила: если в промпте нет географии (кто где сидит, расстояния, куда смотрит свет), выбери правдоподобно и ЗАПИШИ каждое такое допущение в gaps по-русски одной короткой фразой. Также записывай в gaps противоречия (два действия сразу, быстрое движение, текст в кадре, смена света между планами). 3–8 пунктов, без воды. Все подписи — по-русски. Числа — как числа.`;
-async function build(){
-  const text=$('#prompt').value.trim(); if(!text){status('Вставь промпт.',true);return}
-  store.set('previs.prompt',text); const btn=$('#build'); btn.disabled=true; status('Claude раскладывает промпт по секундам…');
+function readPrompt(){const text=$('#prompt').value.trim(); if(!text){status('Сначала вставь промпт.',true);$('#prompt').focus();return null} store.set('previs.prompt',text);return text}
+function buildLocal(){
+  const text=readPrompt(); if(!text)return;
+  try{ loadScene(localParse(text,$('#fmt').value)); status('Готово. Жми «Пуск» или двигай ползунок. Это разбор по ключевым словам: проверь «Что я додумал».'); setPlaying(true); }
+  catch(e){ status('Не смог разобрать: '+(e&&e.message||e),true); console.error(e); }
+}
+async function buildClaude(){
+  const text=readPrompt(); if(!text)return; const btn=$('#claudeBuild'); btn.disabled=true; status('Claude раскладывает промпт по секундам…');
   let sample=null; try{ sample=window.claude&&claude.use?await claude.use('sample'):null }catch(e){}
-  if(!sample){btn.disabled=false;status('Автоанализ доступен только при открытии страницы в Claude. Здесь можно править JSON вручную.',true);tab('json');return}
+  if(!sample){btn.disabled=false;status('Claude здесь недоступен. Нажми «Построить 3D»: соберу без него.',true);return}
   try{
     const res=await sample(SYS+'\n\nФормат кадра: '+$('#fmt').value+'\n\nПРОМПТ:\n'+text,{modelTier:'complex',cache:false});
     let s=(res&&res.text||'').trim().replace(/^```(?:json)?/i,'').replace(/```$/,''); const a=s.indexOf('{'),b=s.lastIndexOf('}'); if(a<0||b<a)throw new Error('Claude вернул не JSON. Нажми ещё раз.');
-    const obj=JSON.parse(s.slice(a,b+1)); loadScene(obj); status('Готово. Двигай ползунок или жми Пуск.'); setPlaying(true);
-  }catch(e){ status('Не получилось: '+(e&&e.message||e&&e.code||'ошибка')+(e&&e.code==='not_granted'?' (доступ к Claude не разрешён)':''),true); }
+    loadScene(JSON.parse(s.slice(a,b+1))); status('Готово (разобрал Claude). Жми «Пуск».'); setPlaying(true);
+  }catch(e){ status('Claude не ответил ('+(e&&e.message||e&&e.code||'ошибка')+'). Нажми «Построить 3D»: соберу без него.',true); }
   btn.disabled=false;
 }
-$('#build').onclick=build;
+$('#build').onclick=buildLocal; $('#claudeBuild').onclick=buildClaude;
 $('#applyJson').onclick=()=>{try{loadScene(JSON.parse($('#json').value));status('JSON применён.')}catch(e){status('Ошибка JSON: '+e.message,true)}};
 $('#copyJson').onclick=async()=>{const el=$('#json');try{await navigator.clipboard.writeText(el.value);status('Скопировано.')}catch(e){el.select();status('Выдели и скопируй вручную.')}};
 
@@ -679,17 +866,16 @@ const DEMO={
   {t0:0,t1:3,name:'План 1',framing:'крупный',desc:'Лицо Артёма, камера статична, стакан в руке'},
   {t0:3,t1:9,name:'План 2',framing:'средний',desc:'Двое за столом, медленный наезд'},
   {t0:9,t1:12,name:'План 3',framing:'общий',desc:'Отъезд, Лев встаёт, герои маленькие'}],
- speech:[{t0:0.6,t1:2.8,who:'Артём',text:'Ты же знал, что так будет.'}],
- fx:[{t0:0,t1:12,text:'ветер, пыль'},{t0:9.7,t1:10.3,text:'скрип стула'}],
  gaps:['Не сказано расстояние между стульями: взято 1.9 м','Не сказано, что за столом на фоне: взят пустой горизонт','Не указано, куда именно смотрит Лев: взят север вдоль поля','В плане 2 камера стоит дальше, чем кажется: в вертикальном кадре двоих за столом помещает только 50 мм с 5 м','Свет слева: у Артёма он падает в профиль, лицо снимается в 3/4 против света']
 };
-$('#demo').onclick=()=>{$('#prompt').value=DEMO_PROMPT;setFormat('9:16');loadScene(DEMO);status('Демо загружено. Нажми «Построить 3D», чтобы собрать сцену из своего промпта.')};
+$('#demo').onclick=()=>{$('#prompt').value=DEMO_PROMPT;setFormat('9:16');buildLocal()};
 
 /* ---------- Старт ---------- */
 readTheme(); orbApply();
-$('#prompt').value=store.get('previs.prompt')||DEMO_PROMPT;
+$('#prompt').value=store.get('previs.prompt')||'';
 setFormat('9:16'); fitMain(); fitPov();
-loadScene(DEMO);
+loadScene({title:'Пусто',duration:10,characters:[],props:[],camera:{keyframes:[{t:0,pos:[0,1.6,6],target:[0,1,0],lens:35}]}});
+window.PREVIS.load=loadScene; window.PREVIS.DEMO=DEMO;
 requestAnimationFrame(frame);
 })();
 </script>
