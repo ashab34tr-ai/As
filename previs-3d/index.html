@@ -181,8 +181,13 @@ select{background:var(--panel2);border:1px solid var(--line);border-radius:6px;p
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
+addEventListener('error',function(e){var s=document.getElementById('status');if(s){s.textContent='Ошибка страницы: '+(e.message||'неизвестно');s.classList.add('err')}});
+if(typeof THREE==='undefined'){var _s=document.getElementById('status');if(_s){_s.textContent='Не загрузилась библиотека 3D (three.js с cdnjs). Проверь интернет и обнови страницу.';_s.classList.add('err')}}
+</script>
+<script>
 (function(){
 'use strict';
+if(typeof THREE==='undefined')return;
 const $=s=>document.querySelector(s);
 const clamp=(x,a,b)=>Math.min(b,Math.max(a,x));
 const lerp=(a,b,t)=>a+(b-a)*t;
@@ -329,8 +334,9 @@ function evalCam(t){
 
 /* ---------- Three: сцена ---------- */
 const mainCv=$('#main'),povCv=$('#povcv');
-const R1=new THREE.WebGLRenderer({canvas:mainCv,antialias:true}); R1.shadowMap.enabled=true; R1.shadowMap.type=THREE.PCFSoftShadowMap;
-const R2=new THREE.WebGLRenderer({canvas:povCv,antialias:true,preserveDrawingBuffer:false}); R2.shadowMap.enabled=true; R2.shadowMap.type=THREE.PCFSoftShadowMap;
+const glErr=[];
+function mkR(cv){for(const aa of [true,false]){try{const r=new THREE.WebGLRenderer({canvas:cv,antialias:aa});r.shadowMap.enabled=true;r.shadowMap.type=THREE.PCFSoftShadowMap;return r}catch(e){glErr.push(String(e&&e.message||e))}}return null}
+const R1=mkR(mainCv),R2=mkR(povCv);
 const scene=new THREE.Scene();
 const orbCam=new THREE.PerspectiveCamera(45,1,.1,500);
 const shotCam=new THREE.PerspectiveCamera(40,9/16,.05,300);
@@ -551,10 +557,11 @@ function setView(v){ if(v==='top'){orb.ph=.001;orb.th=0}else if(v==='side'){orb.
 })();
 
 /* ---------- Размеры и рендер ---------- */
-function fitMain(){ const w=mainCv.parentElement.clientWidth,h=mainCv.parentElement.clientHeight; if(!w||!h)return; R1.setPixelRatio(Math.min(devicePixelRatio,2)); R1.setSize(w,h,false); orbCam.aspect=w/h; orbCam.updateProjectionMatrix(); }
-function fitPov(){ const wrap=$('#povwrap'); const aw=wrap.clientWidth-20, ah=wrap.clientHeight-20; if(aw<=0||ah<=0)return; let w=aw,h=aw/ASPECT; if(h>ah){h=ah;w=ah*ASPECT} w=Math.floor(w);h=Math.floor(h); const f=$('#frame'); f.style.width=w+'px'; f.style.height=h+'px'; R2.setPixelRatio(Math.min(devicePixelRatio,2)); R2.setSize(w,h,false); }
+function fitMain(){ if(!R1)return; const w=mainCv.parentElement.clientWidth,h=mainCv.parentElement.clientHeight; if(!w||!h)return; R1.setPixelRatio(Math.min(devicePixelRatio,2)); R1.setSize(w,h,false); orbCam.aspect=w/h; orbCam.updateProjectionMatrix(); }
+function fitPov(){ if(!R2)return; const wrap=$('#povwrap'); const aw=wrap.clientWidth-20, ah=wrap.clientHeight-20; if(aw<=0||ah<=0)return; let w=aw,h=aw/ASPECT; if(h>ah){h=ah;w=ah*ASPECT} w=Math.floor(w);h=Math.floor(h); const f=$('#frame'); f.style.width=w+'px'; f.style.height=h+'px'; R2.setPixelRatio(Math.min(devicePixelRatio,2)); R2.setSize(w,h,false); }
 new ResizeObserver(fitMain).observe(mainCv.parentElement); new ResizeObserver(fitPov).observe($('#povwrap')); addEventListener('resize',()=>{fitMain();fitPov()});
 function renderAll(){
+  if(!R1||!R2)return;
   scene.background=themeCol.bg; wallMats.forEach(m=>m.opacity=.35);
   camHelper.visible=camBody.visible=true; R1.render(scene,orbCam);
   // кадр камеры
@@ -597,7 +604,7 @@ function loadScene(raw){
   const cx=xs.length?xs.reduce((a,b)=>a+b)/xs.length:0, cz=zs.length?zs.reduce((a,b)=>a+b)/zs.length:0;
   const pts=SC.cam.kfs.map(k=>k.pos); let ext=4; pts.forEach(p=>{ext=Math.max(ext,Math.hypot(p[0]-cx,p[2]-cz)+1)});
   orb.tx=cx;orb.ty=1;orb.tz=cz;orb.r=clamp(ext*1.1,5,40); setView('free');
-  $('#emptyHint').hidden=SC.chars.length>0;
+  if(R1&&R2)$('#emptyHint').hidden=SC.chars.length>0;
   applyViewToggles(); applyTime(0);
 }
 
@@ -872,6 +879,7 @@ $('#demo').onclick=()=>{$('#prompt').value=DEMO_PROMPT;setFormat('9:16');buildLo
 
 /* ---------- Старт ---------- */
 readTheme(); orbApply();
+if(!R1||!R2){ const h=$('#emptyHint'); h.textContent='3D-вид не запустился в этом окне (WebGL выключен). Таймлайн и список «в кадре» всё равно работают. Открой страницу в обычном браузере или в Chrome.'; h.style.top='30%'; }
 $('#prompt').value=store.get('previs.prompt')||'';
 setFormat('9:16'); fitMain(); fitPov();
 loadScene({title:'Пусто',duration:10,characters:[],props:[],camera:{keyframes:[{t:0,pos:[0,1.6,6],target:[0,1,0],lens:35}]}});
